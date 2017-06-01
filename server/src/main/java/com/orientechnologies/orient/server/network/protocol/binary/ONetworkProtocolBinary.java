@@ -212,13 +212,6 @@ public class ONetworkProtocolBinary extends ONetworkProtocol {
           if (shouldReadToken(connection, requestType)) {
             tokenBytes = channel.readBytes();
           }
-          int protocolVersion = OChannelBinaryProtocol.CURRENT_PROTOCOL_VERSION;
-          ORecordSerializer serializer = ORecordSerializerNetworkFactory.INSTANCE.forProtocol(protocolVersion);
-          if (connection != null) {
-            protocolVersion = connection.getData().protocolVersion;
-            serializer = connection.getData().getSerializer();
-          }
-          request.read(channel, protocolVersion, serializer);
         } catch (IOException e) {
           OLogManager.instance().debug(this, "I/O Error on client clientId=%d reqType=%d", clientTxId, requestType, e);
           sendShutdown();
@@ -243,7 +236,41 @@ public class ONetworkProtocolBinary extends ONetworkProtocol {
             if (connection == null || connection.getDatabase() == null)
               throw new ODatabaseException("Required database session");
           }
+        } catch (RuntimeException t) {
+          // This should be moved in the execution of the command that manipulate data
+          if (connection != null && connection.getDatabase() != null) {
+            final OSBTreeCollectionManager collectionManager = connection.getDatabase().getSbTreeCollectionManager();
+            if (collectionManager != null)
+              collectionManager.clearChangedIds();
+          }
 
+          // TODO: Replace this with build error response
+          try {
+            okSent = true;
+            sendError(connection, clientTxId, t);
+          } catch (IOException e) {
+            OLogManager.instance().debug(this, "I/O Error on client clientId=%d reqType=%d", clientTxId, requestType, e);
+            sendShutdown();
+
+          }
+          return;
+        }
+
+        try {
+          int protocolVersion = OChannelBinaryProtocol.CURRENT_PROTOCOL_VERSION;
+          ORecordSerializer serializer = ORecordSerializerNetworkFactory.INSTANCE.forProtocol(protocolVersion);
+          if (connection != null) {
+            protocolVersion = connection.getData().protocolVersion;
+            serializer = connection.getData().getSerializer();
+          }
+          request.read(channel, protocolVersion, serializer);
+        } catch (IOException e) {
+          OLogManager.instance().debug(this, "I/O Error on client clientId=%d reqType=%d", clientTxId, requestType, e);
+          sendShutdown();
+          return;
+        }
+
+        try {
           response = request.execute(connection.getExecutor());
         } catch (RuntimeException t) {
           // This should be moved in the execution of the command that manipulate data
